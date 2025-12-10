@@ -1,17 +1,6 @@
 # app.py
 """
 Local Document Analyzer (OpenAI Vision OCR + OpenAI Invoice Parsing)
-
-Features:
-- Upload images or PDFs
-- Convert PDFs to images
-- Extract text using OpenAI Vision (OCR)
-- Parse invoice data using OpenAI model
-- Show structured results + summary analytics
-- Download results as CSV/Excel
-
-Run:
-    streamlit run app.py
 """
 
 import streamlit as st
@@ -23,24 +12,31 @@ import base64
 import tempfile
 import pandas as pd
 from datetime import datetime
-from pdf2image import convert_from_bytes
 from PIL import Image
 from openai import OpenAI
-
+import fitz  # NEW: PyMuPDF replaces pdf2image
 
 st.set_page_config(page_title="Document Analyzer (OpenAI OCR)", layout="wide")
 
 # ----------------- UTILITIES -----------------
 
+def pdf_to_images(pdf_bytes):
+    """Convert PDF to list of PIL images using PyMuPDF (no poppler needed)."""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    images = []
+
+    for page in doc:
+        pix = page.get_pixmap(dpi=200)
+        img_bytes = pix.tobytes("png")
+        images.append(Image.open(io.BytesIO(img_bytes)))
+
+    return images
+
 def encode_image(image_bytes):
     return base64.b64encode(image_bytes).decode()
 
 def openai_ocr(image_bytes, api_key, model="gpt-4o-mini"):
-    """
-    OCR using OpenAI new API format (Vision).
-    """
     client = OpenAI(api_key=api_key)
-
     img_b64 = base64.b64encode(image_bytes).decode()
 
     response = client.chat.completions.create(
@@ -53,9 +49,7 @@ def openai_ocr(image_bytes, api_key, model="gpt-4o-mini"):
                     {"type": "text", "text": "Extract all text from the document."},
                     {
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{img_b64}"
-                        }
+                        "image_url": {"url": f"data:image/png;base64,{img_b64}"}
                     }
                 ]
             }
@@ -101,10 +95,7 @@ def openai_parse_invoice(ocr_text, api_key, model="gpt-4o-mini"):
     )
 
     raw = response.choices[0].message.content.strip()
-
-    # Clean accidental code block wrapper
     raw = raw.replace("```json", "").replace("```", "")
-
     return json.loads(raw)
 
 def safe_float(x):
@@ -144,18 +135,17 @@ if st.button("Process Documents"):
     for file in files:
         st.subheader(f"📄 Processing {file.name}")
 
-        images = []
-
+        # ===== PDF OR IMAGE =====
         if file.name.lower().endswith(".pdf"):
             pdf_bytes = file.read()
-            images = convert_from_bytes(pdf_bytes)
+            images = pdf_to_images(pdf_bytes)   # NEW: use PyMuPDF
             st.info(f"PDF contains {len(images)} page(s).")
         else:
             images = [Image.open(file)]
 
         full_ocr_text = ""
 
-        # OCR each page
+        # ===== OCR each page =====
         for idx, img in enumerate(images):
             st.write(f"OCR Page {idx+1} ...")
             buf = io.BytesIO()
@@ -166,7 +156,7 @@ if st.button("Process Documents"):
 
             full_ocr_text += "\n" + ocr_text
 
-        # Parse invoice
+        # ===== Parse invoice =====
         st.write("🔍 Parsing invoice data...")
         parsed = openai_parse_invoice(full_ocr_text, api_key, model=parse_model)
 
@@ -179,20 +169,23 @@ if st.button("Process Documents"):
         st.success("Parsed successfully!")
         st.json(parsed)
 
-    # Convert to DataFrame
+    # ===== DataFrame =====
     df = pd.DataFrame(parsed_records)
 
     st.header("📊 Extracted Data")
     st.dataframe(df)
 
-    # Download CSV
+    # ===== Download CSV =====
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button("Download CSV", csv, "invoices.csv", "text/csv")
 
-    # Download Excel
+    # ===== Download Excel =====
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
         df.to_excel(tmp.name, index=False)
         excel_bytes = open(tmp.name, "rb").read()
-        st.download_button("Download Excel", excel_bytes, "invoices.xlsx",
-                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
+        st.download_button(
+            "Download Excel", 
+            excel_bytes, 
+            "invoices.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
