@@ -18,7 +18,7 @@ Local Document Analyzer is a Streamlit application leveraging OpenAI's Vision an
 1. **Clone the Repository**
 
    ```bash
-   git clone [<repository-url>](https://github.com/Chandrakanth-Zen-Python/local_document_analyzer)
+   git clone https://github.com/Chandrakanth-Zen-Python/local_document_analyzer
    cd local-document-analyzer
    ```
 
